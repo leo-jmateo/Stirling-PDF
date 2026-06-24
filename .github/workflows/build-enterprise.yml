@@ -56,44 +56,32 @@ jobs:
     timeout-minutes: 45
     env:
       PREMIUM_KEY: ${{ secrets.PREMIUM_KEY_ENTERPRISE }}
-      HAS_PREMIUM_KEY: ${{ secrets.PREMIUM_KEY_ENTERPRISE != '' }}
       PREMIUM_ENABLED: "true"
       SYSTEM_ENABLEANALYTICS: "false"
       DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - name: Skip enterprise E2E when premium key is unavailable
-        if: ${{ env.HAS_PREMIUM_KEY != 'true' }}
-        run: |
-          echo "PREMIUM_KEY_ENTERPRISE is not configured; skipping Enterprise E2E." >> "$GITHUB_STEP_SUMMARY"
       - name: Harden Runner
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
         with:
           egress-policy: audit
       - name: Checkout repository
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Set up JDK 25
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           java-version: "25"
           distribution: "temurin"
       - name: Set up Node.js
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "22"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
       - name: Install Task
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         uses: go-task/setup-task@01a4adf9db2d14c1de7a560f09170b6e0df736aa # v2.1.0
       - name: Install Playwright (chromium only)
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         run: task e2e:install -- chromium
       - name: Build frontend (needed for playwright's vite preview webServer)
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         # Enterprise tests target :8080 (Spring Boot's bundled frontend), but
         # playwright's webServer config still launches `vite preview --port 5173`
         # before any test run, which needs dist/ to exist. VITE_BUILD_FOR_PREVIEW
@@ -103,7 +91,6 @@ jobs:
         run: task frontend:build
 
       - name: Resolve kubernetes.docker.internal to localhost
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         # The compose stacks set KC_HOSTNAME=kubernetes.docker.internal so
         # Keycloak issues redirect URIs against that host. Docker Desktop
         # auto-resolves it; GHA runners don't. Map it to 127.0.0.1 so the
@@ -116,7 +103,6 @@ jobs:
       # SPA serves on :8080 and OAuth/SAML callbacks land on the same host
       # that the browser is interacting with.
       - name: Define helpers
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         run: |
           {
             echo 'wait_for_backend() {'
@@ -144,11 +130,9 @@ jobs:
 
       # ───────── OAuth round-trip ─────────
       - name: Bring up Keycloak (OAuth realm)
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         working-directory: testing/compose
         run: docker compose -f docker-compose-keycloak-oauth.yml up -d --no-deps keycloak-oauth-db keycloak-oauth
       - name: Wait for Keycloak (OAuth) ready
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         working-directory: testing/compose
         run: |
           for i in $(seq 1 60); do
@@ -161,7 +145,6 @@ jobs:
           docker compose -f docker-compose-keycloak-oauth.yml logs --tail=200 keycloak-oauth
           exit 1
       - name: Boot Stirling-PDF (frontend baked in, OAuth env)
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         env:
           SECURITY_ENABLELOGIN: "true"
           SECURITY_LOGINMETHOD: "all"
@@ -181,11 +164,10 @@ jobs:
           echo $! > /tmp/backend.pid
           wait_for_backend
       - name: Run enterprise OAuth Playwright tests
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         id: oauth-tests
         run: task e2e:enterprise -- --grep "OAuth"
       - name: Stop backend + tear down OAuth Keycloak
-        if: ${{ always() && env.HAS_PREMIUM_KEY == 'true' }}
+        if: always()
         run: |
           source /tmp/helpers.sh
           stop_backend
@@ -193,11 +175,9 @@ jobs:
 
       # ───────── SAML round-trip ─────────
       - name: Bring up Keycloak (SAML realm)
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         working-directory: testing/compose
         run: docker compose -f docker-compose-keycloak-saml.yml up -d --no-deps keycloak-saml-db keycloak-saml
       - name: Wait for Keycloak (SAML) ready
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         working-directory: testing/compose
         run: |
           for i in $(seq 1 60); do
@@ -207,7 +187,6 @@ jobs:
           docker compose -f docker-compose-keycloak-saml.yml logs --tail=200 keycloak-saml
           exit 1
       - name: Generate SAML SP certs + fetch Keycloak IdP cert
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         # The .pem/.crt/.key files are gitignored (test-only certs); the
         # docker-based start-saml-test.sh generates them at runtime, so do
         # the same in CI before bootRun reads them.
@@ -231,7 +210,6 @@ jobs:
           test -s keycloak-saml-cert.pem
           echo "✓ SAML certs prepared"
       - name: Boot Stirling-PDF (frontend baked in, SAML env)
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         env:
           SECURITY_ENABLELOGIN: "true"
           SECURITY_LOGINMETHOD: "all"
@@ -259,11 +237,10 @@ jobs:
           echo $! > /tmp/backend.pid
           wait_for_backend
       - name: Run enterprise SAML Playwright tests
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         id: saml-tests
         run: task e2e:enterprise -- --grep "SAML"
       - name: Stop backend + tear down SAML Keycloak
-        if: ${{ always() && env.HAS_PREMIUM_KEY == 'true' }}
+        if: always()
         run: |
           source /tmp/helpers.sh
           stop_backend
@@ -271,7 +248,6 @@ jobs:
 
       # ───────── License-gated feature tests (no IdP needed) ─────────
       - name: Wipe DB so InitialSecuritySetup re-runs with admin/adminadmin
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         # Earlier phases (OAuth, SAML) create the default admin/stirling user.
         # InitialSecuritySetup only honours SECURITY_INITIALLOGIN_* when the
         # admin user doesn't already exist, so the persisted DB has to be
@@ -280,7 +256,6 @@ jobs:
           rm -f app/core/configs/stirling-pdf-DB*.mv.db
           rm -rf app/core/configs/backup
       - name: Boot Stirling-PDF (frontend baked in, premium only)
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         env:
           SECURITY_INITIALLOGIN_USERNAME: admin
           SECURITY_INITIALLOGIN_PASSWORD: adminadmin
@@ -292,22 +267,21 @@ jobs:
           echo $! > /tmp/backend.pid
           wait_for_backend
       - name: Run enterprise feature Playwright tests
-        if: ${{ env.HAS_PREMIUM_KEY == 'true' }}
         id: feature-tests
         run: task e2e:enterprise -- --grep "Enterprise license"
       - name: Print backend log on failure
-        if: ${{ failure() && env.HAS_PREMIUM_KEY == 'true' }}
+        if: failure()
         run: |
           echo "::group::Enterprise backend log"
           tail -500 /tmp/backend.log || true
           echo "::endgroup::"
       - name: Stop backend (final)
-        if: ${{ always() && env.HAS_PREMIUM_KEY == 'true' }}
+        if: always()
         run: |
           source /tmp/helpers.sh
           stop_backend
       - name: Upload Playwright report
-        if: ${{ always() && env.HAS_PREMIUM_KEY == 'true' }}
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-report-enterprise-${{ github.run_id }}
